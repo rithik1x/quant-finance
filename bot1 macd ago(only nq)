@@ -1,0 +1,107 @@
+# region imports
+from AlgorithmImports import *
+# endregion
+
+
+class EquitiesStaticTemplateAlgorithm(QCAlgorithm):
+    _symbols = []
+    _tolerance = 0.0025
+    _previous_day = 0
+
+    def initialize(self):
+        self.set_start_date(2015, 1, 1)
+        self.set_end_date(2024, 12, 31)
+        self.set_cash(100000)
+
+        self.settings.automatic_indicator_warm_up = True
+
+        # === NEW: discipline parameters ===
+        self.max_hold_days = 20          # time-based exit
+        self.cooldown_days = 5           # cooldown after exit
+        self.entry_day = {}              # symbol -> entry day
+        self.last_exit_day = {}          # symbol -> exit day
+
+        for ticker in ["QQQ"]:
+            equity = self.add_equity(ticker, Resolution.DAILY)
+            equity.macd = self.macd(
+                equity.symbol,
+                12,
+                26,
+                9,
+                MovingAverageType.EXPONENTIAL,
+                Resolution.DAILY
+            )
+            self.plot_indicator(equity.symbol.value, equity.macd)
+            self._symbols.append(equity.symbol)
+
+            # NEW: initialize tracking
+            self.entry_day[equity.symbol] = None
+            self.last_exit_day[equity.symbol] = None
+
+        trades_chart = Chart("Trades")
+        trades_chart.AddSeries(Series("Buy", SeriesType.Scatter, 0))
+        trades_chart.AddSeries(Series("Sell", SeriesType.Scatter, 0))
+        self.AddChart(trades_chart)
+
+    def on_data(self, data: Slice):
+        if self._previous_day == self.time.day:
+            return
+
+        for symbol in self._symbols:
+            security = self.securities[symbol]
+            price = security.price
+            invested = security.holdings.invested
+
+            # === NEW: cooldown guard ===
+            if self.last_exit_day[symbol] is not None:
+                if (self.time.date() - self.last_exit_day[symbol]).days < self.cooldown_days:
+                    continue
+
+            # === NEW: time-based exit ===
+            if invested and self.entry_day[symbol] is not None:
+                hold_days = (self.time.date() - self.entry_day[symbol]).days
+                if hold_days >= self.max_hold_days:
+                    self.liquidate(symbol)
+                    self.Plot("Trades", "Sell", price)
+                    self.Debug(f"TIME EXIT {symbol} @ {price} on {self.Time}")
+                    self.entry_day[symbol] = None
+                    self.last_exit_day[symbol] = self.time.date()
+                    continue
+
+            direction = self._get_order_direction(symbol)
+
+            if direction == OrderDirection.BUY and not invested:
+                self.set_holdings(symbol, 1 / len(self._symbols))
+                self.entry_day[symbol] = self.time.date()     # NEW
+                self.Plot("Trades", "Buy", price)
+                self.Debug(f"BUY {symbol} @ {price} on {self.Time}")
+
+            elif direction == OrderDirection.SELL and invested:
+                self.liquidate(symbol)
+                self.entry_day[symbol] = None                 # NEW
+                self.last_exit_day[symbol] = self.time.date() # NEW
+                self.Plot("Trades", "Sell", price)
+                self.Debug(f"SELL {symbol} @ {price} on {self.Time}")
+
+        self._previous_day = self.time.day
+
+    def _get_order_direction(self, symbol) -> OrderDirection:
+        security = self.securities[symbol]
+        quantity = security.holdings.quantity
+        macd = security.macd
+
+        if not macd.fast.current.value:
+            return OrderDirection.HOLD
+
+        signal_delta_percent = (
+            (macd.current.value - macd.signal.current.value)
+            / macd.fast.current.value
+        )
+
+        if quantity <= 0 and signal_delta_percent > self._tolerance:
+            return OrderDirection.BUY
+
+        if quantity >= 0 and signal_delta_percent < -self._tolerance:
+            return OrderDirection.SELL
+
+        return OrderDirection.HOLD
