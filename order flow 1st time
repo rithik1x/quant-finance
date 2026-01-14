@@ -1,0 +1,84 @@
+# region imports
+from AlgorithmImports import *
+# endregion
+
+class MultiSymbolTickOrderFlowBot(QCAlgorithm):
+
+    def initialize(self):
+        self.set_start_date(2024, 9, 1)
+        self.set_end_date(2024, 12, 31)
+        self.set_cash(100000)
+
+        # --- Fixed universe: QC-supported symbols with MINUTE data (fallback from TICK) ---
+        # Equities: AAPL, PLTR, WBD, LMT (tick available in backtest)
+        # Forex: GBPUSD, USDJPY (standard pairs)
+        # Removed: NQ (needs AddFuture), USDINR (not standard QC forex)
+        tickers = [
+            "AAPL",
+            "PLTR",
+            "WBD",
+            "LMT",
+            "GBPUSD",
+            "USDJPY",
+        ]
+
+        self.symbols = []
+        self.tick_buffers = {}
+        self.active_regime = {}
+        self.max_position_value = 0.05   # 5% per symbol
+        self.daily_loss_limit = 0.03     # 3% daily kill-switch
+        self.window_seconds = 5
+        self.im_lookback = 100
+
+        # Use MINUTE resolution (compatible fallback; QC provides tick-like trade bars)
+        for t in tickers:
+            try:
+                if len(t) == 6 and t[3:] in ["USD", "JPY"]:  # Forex pairs
+                    symbol = self.add_forex(t, Resolution.MINUTE).symbol
+                else:  # US equities
+                    symbol = self.add_equity(t, Resolution.MINUTE).symbol
+            except Exception as e:
+                self.debug(f"Skipping {t}: {str(e)}")
+                continue
+
+            self.symbols.append(symbol)
+            self.tick_buffers[symbol] = RollingWindow[Tick](self.im_lookback)
+            self.active_regime[symbol] = False
+
+        self.debug(f"Loaded {len(self.symbols)} symbols: {[s.value for s in self.symbols]}")
+
+        self.current_trading_date = None
+        self.starting_equity_today = None
+
+    def on_data(self, slice: Slice):
+        # Daily PnL anchor and kill-switch
+        if self.current_trading_date != self.time.date():
+            self.current_trading_date = self.time.date()
+            self.starting_equity_today = self.portfolio.total_portfolio_value
+            self.debug(f"New day {self.current_trading_date}, starting equity: {self.starting_equity_today:.2f}")
+
+        equity = self.portfolio.total_portfolio_value
+        if self.starting_equity_today is not None:
+            dd = (equity - self.starting_equity_today) / self.starting_equity_today
+            if dd <= -self.daily_loss_limit:
+                if self.portfolio.invested:
+                    self.liquidate()
+                self.debug(f"Daily loss limit hit ({dd:.1%}), liquidated for {self.current_trading_date}")
+                return
+
+        # Process each symbol
+        for symbol in self.symbols:
+            # Get trade bars (minute data simulates recent ticks)
+            bars = slice.bars.get(symbol)
+            if not bars:
+                continue
+
+            buf = self.tick_buffers[symbol]
+            bar = bars[symbol]  # Latest minute bar
+
+            # Simulate tick from bar: use close price/volume (conservative)
+            simulated_tick = Tick(self.time, symbol, bar.close, bar.volume, TickType.TRADE)
+            buf.store_bar(simulated_tick)
+
+            if not buf.is_ready:
+                self.active_re
