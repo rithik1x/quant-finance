@@ -1,0 +1,241 @@
+
+import numpy as np
+import matplotlib.pyplot as plt
+import math
+from IPython.display import display
+
+# CONFIGURATION - CHANGE THESE PARAMETERS!
+
+
+print("MONTE CARLO")
+print("=" * 100)
+
+# Choose your IPO
+company_name = "snowflake"  # CHANGE THIS
+
+# IPO Parameters
+ipo_price = 60           # CHANGE THIS - IPO offering price
+day1_pop_min = 0.30      # CHANGE THIS - Min day 1 jump (30% = 0.30)
+day1_pop_max = 0.80      # CHANGE THIS - Max day 1 jump (80% = 0.80)
+
+# Volatility (how crazy it moves)
+early_vol = 1.2          # CHANGE THIS - First 30 days (1.2 = 120%)
+mid_vol = 0.85           # CHANGE THIS - Days 31-90
+late_vol = 0.60          # CHANGE THIS - After 90 days
+
+# Simulation settings
+risk_free_rate = 0.045
+days = 365               # How many days to simulate
+num_sims = 10000          # Number of simulations
+
+print(f"\n📊 Simulating: {company_name}")
+print(f"IPO Price: ${ipo_price}")
+print(f"Expected Day 1 Pop: {day1_pop_min*100:.0f}% - {day1_pop_max*100:.0f}%")
+print(f"Volatility: {early_vol*100:.0f}% (early) → {late_vol*100:.0f}% (late)")
+print(f"Running {num_sims:,} simulations for {days} days...")
+print("=" * 70)
+
+# ============================================================================
+# RUN MONTE CARLO SIMULATION
+# ============================================================================
+
+all_final_prices = []
+sample_paths = []
+dt = 1/252
+
+for sim in range(num_sims):
+    # Day 1 pop
+    day1_jump = np.random.uniform(day1_pop_min, day1_pop_max)
+    price = ipo_price * (1 + day1_jump)
+
+    # Store path (first 100 only)
+    if sim < 100:
+        path = [ipo_price, price]
+
+    # Simulate remaining days
+    for day in range(2, days + 1):
+        if day <= 30:
+            sigma = early_vol
+        elif day <= 90:
+            sigma = mid_vol
+        else:
+            sigma = late_vol
+
+        z = np.random.standard_normal()
+        price = price * math.exp(
+            (risk_free_rate - 0.5 * sigma**2) * dt +
+            sigma * math.sqrt(dt) * z
+        )
+
+        if sim < 100:
+            path.append(price)
+
+    all_final_prices.append(price)
+    if sim < 100:
+        sample_paths.append(path)
+
+print("\n Simulation Complete!")
+
+# CALCULATE STATISTICS
+
+
+all_final_prices = np.array(all_final_prices)
+median_price = np.median(all_final_prices)
+p5 = np.percentile(all_final_prices, 5)
+p25 = np.percentile(all_final_prices, 25)
+p75 = np.percentile(all_final_prices, 75)
+p95 = np.percentile(all_final_prices, 95)
+
+returns = (all_final_prices - ipo_price) / ipo_price * 100
+median_return = np.median(returns)
+
+prob_profit = (all_final_prices > ipo_price).sum() / num_sims * 100
+prob_double = (all_final_prices > ipo_price * 2).sum() / num_sims * 100
+prob_triple = (all_final_prices > ipo_price * 3).sum() / num_sims * 100
+prob_loss50 = (all_final_prices < ipo_price * 0.5).sum() / num_sims * 100
+
+print("\n" + "=" * 70)
+print(" RESULTS")
+print("=" * 70)
+print(f"\nStarting Price: ${ipo_price}")
+print(f"\nAfter {days} days:")
+print(f"  Best (95%):     ${p95:.2f}")
+print(f"  Good (75%):     ${p75:.2f}")
+print(f"  Expected:       ${median_price:.2f}")
+print(f"  Bad (25%):      ${p25:.2f}")
+print(f"  Worst (5%):     ${p5:.2f}")
+
+print(f"\n Probabilities:")
+print(f"  Profit (>$0):      {prob_profit:.1f}%")
+print(f"  Double (>+100%):   {prob_double:.1f}%")
+print(f"  Triple (>+200%):   {prob_triple:.1f}%")
+print(f"  Lose 50%:          {prob_loss50:.1f}%")
+
+investment = 10000
+print(f"\n ${investment:,} Investment Scenarios:")
+print(f"  Best:     ${(investment/ipo_price)*p95:>9,.0f}  ({((p95-ipo_price)/ipo_price)*100:+6.0f}%)")
+print(f"  Expected: ${(investment/ipo_price)*median_price:>9,.0f}  ({((median_price-ipo_price)/ipo_price)*100:+6.0f}%)")
+print(f"  Worst:    ${(investment/ipo_price)*p5:>9,.0f}  ({((p5-ipo_price)/ipo_price)*100:+6.0f}%)")
+print("=" * 70)
+
+# CREATE VISUALIZATIONS
+
+
+print("\n📊 Generating charts...")
+
+fig = plt.figure(figsize=(18, 10))
+fig.suptitle(f'{company_name} IPO Price Prediction - Monte Carlo Analysis',
+             fontsize=20, fontweight='bold', y=0.98)
+
+# Chart 1: Price Paths
+ax1 = plt.subplot(2, 3, 1)
+time_axis = np.arange(0, days + 1)
+for path in sample_paths:
+    ax1.plot(time_axis, path, alpha=0.2, linewidth=0.8, color='steelblue')
+ax1.axhline(y=ipo_price, color='red', linestyle='--', linewidth=2.5,
+            label=f'IPO Price: ${ipo_price}')
+ax1.set_xlabel('Days Since IPO', fontsize=12, fontweight='bold')
+ax1.set_ylabel('Stock Price ($)', fontsize=12, fontweight='bold')
+ax1.set_title('Simulated Price Paths (100 samples)', fontsize=14, fontweight='bold')
+ax1.legend(loc='upper left', fontsize=11)
+ax1.grid(True, alpha=0.3)
+
+# Chart 2: Final Price Distribution
+ax2 = plt.subplot(2, 3, 2)
+ax2.hist(all_final_prices, bins=60, color='skyblue', edgecolor='black', alpha=0.7)
+ax2.axvline(x=median_price, color='green', linestyle='--', linewidth=2.5,
+            label=f'Median: ${median_price:.2f}')
+ax2.axvline(x=ipo_price, color='red', linestyle='--', linewidth=2.5,
+            label=f'IPO: ${ipo_price}')
+ax2.set_xlabel('Final Price ($)', fontsize=12, fontweight='bold')
+ax2.set_ylabel('Frequency', fontsize=12, fontweight='bold')
+ax2.set_title('Distribution of Final Prices', fontsize=14, fontweight='bold')
+ax2.legend(fontsize=11)
+ax2.grid(True, alpha=0.3, axis='y')
+
+# Chart 3: Return Distribution
+ax3 = plt.subplot(2, 3, 3)
+ax3.hist(returns, bins=60, color='lightcoral', edgecolor='black', alpha=0.7)
+ax3.axvline(x=0, color='red', linestyle='--', linewidth=2.5, label='Break Even')
+ax3.axvline(x=median_return, color='green', linestyle='--', linewidth=2.5,
+            label=f'Median: {median_return:+.1f}%')
+ax3.set_xlabel('Return (%)', fontsize=12, fontweight='bold')
+ax3.set_ylabel('Frequency', fontsize=12, fontweight='bold')
+ax3.set_title('Distribution of Returns', fontsize=14, fontweight='bold')
+ax3.legend(fontsize=11)
+ax3.grid(True, alpha=0.3, axis='y')
+
+# Chart 4: Price Evolution
+ax4 = plt.subplot(2, 3, 4)
+time_points = [0, 7, 30, 90, 180, 365]
+p95_t, p75_t, p50_t, p25_t, p5_t = [], [], [], [], []
+
+for t in time_points:
+    if t == 0:
+        p95_t.append(ipo_price)
+        p75_t.append(ipo_price)
+        p50_t.append(ipo_price)
+        p25_t.append(ipo_price)
+        p5_t.append(ipo_price)
+    else:
+        prices = [path[t] for path in sample_paths]
+        p95_t.append(np.percentile(prices, 95))
+        p75_t.append(np.percentile(prices, 75))
+        p50_t.append(np.percentile(prices, 50))
+        p25_t.append(np.percentile(prices, 25))
+        p5_t.append(np.percentile(prices, 5))
+
+ax4.fill_between(time_points, p5_t, p95_t, alpha=0.2, color='blue',
+                  label='90% Range')
+ax4.fill_between(time_points, p25_t, p75_t, alpha=0.3, color='blue',
+                  label='50% Range')
+ax4.plot(time_points, p50_t, color='darkblue', linewidth=3, label='Median', marker='o')
+ax4.axhline(y=ipo_price, color='red', linestyle='--', linewidth=2.5, label='IPO Price')
+ax4.set_xlabel('Days Since IPO', fontsize=12, fontweight='bold')
+ax4.set_ylabel('Stock Price ($)', fontsize=12, fontweight='bold')
+ax4.set_title('Price Evolution (Confidence Bands)', fontsize=14, fontweight='bold')
+ax4.legend(fontsize=10)
+ax4.grid(True, alpha=0.3)
+
+# Chart 5: Probabilities
+ax5 = plt.subplot(2, 3, 5)
+scenarios = ['Profit\n(>$0)', 'Double\n(>+100%)', 'Triple\n(>+200%)', 'Lose 50%\n(<-50%)']
+probs = [prob_profit, prob_double, prob_triple, prob_loss50]
+colors = ['green', 'lightgreen', 'gold', 'red']
+bars = ax5.bar(scenarios, probs, color=colors, edgecolor='black', alpha=0.7, width=0.6)
+
+for bar, prob in zip(bars, probs):
+    height = bar.get_height()
+    ax5.text(bar.get_x() + bar.get_width()/2., height,
+             f'{prob:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=12)
+
+ax5.set_ylabel('Probability (%)', fontsize=12, fontweight='bold')
+ax5.set_title('Outcome Probabilities', fontsize=14, fontweight='bold')
+ax5.set_ylim(0, max(probs) * 1.2)
+ax5.grid(True, alpha=0.3, axis='y')
+
+# Chart 6: Investment Scenarios
+ax6 = plt.subplot(2, 3, 6)
+scenarios_inv = ['Best\n(95%)', 'Good\n(75%)', 'Expected\n(50%)', 'Bad\n(25%)', 'Worst\n(5%)']
+prices = [p95, p75, median_price, p25, p5]
+values = [(investment / ipo_price) * p for p in prices]
+colors_inv = ['darkgreen', 'lightgreen', 'gold', 'orange', 'red']
+bars2 = ax6.bar(scenarios_inv, values, color=colors_inv, edgecolor='black', alpha=0.7, width=0.6)
+
+for bar, value in zip(bars2, values):
+    height = bar.get_height()
+    profit = value - investment
+    pct = (profit / investment) * 100
+    ax6.text(bar.get_x() + bar.get_width()/2., height,
+             f'${value:,.0f}\n({pct:+.0f}%)',
+             ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+ax6.axhline(y=investment, color='red', linestyle='--', linewidth=2.5,
+            label=f'Break Even (${investment:,})')
+ax6.set_ylabel('Portfolio Value ($)', fontsize=12, fontweight='bold')
+ax6.set_title(f'${investment:,} Investment Outcomes', fontsize=14, fontweight='bold')
+ax6.legend(fontsize=11)
+ax6.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.show()
